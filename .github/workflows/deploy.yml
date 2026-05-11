@@ -66,4 +66,6 @@ jobs:
     steps:
       # Hitting the deploy hook URL tells Render to pull and redeploy the latest image
       - name: Deploy to Render
-        run: curl -f "${{ secrets.RENDER_DEPLOY_HOOK }}"
+        env:
+          DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: curl -f "$DEPLOY_HOOK"
