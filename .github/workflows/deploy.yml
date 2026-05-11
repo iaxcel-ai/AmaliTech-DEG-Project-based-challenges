@@ -1,0 +1,69 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  # ── 1. TEST ──────────────────────────────────────────────────────────────────
+  # Run the test suite first. The pipeline stops here if any test fails.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Install exact versions from the lockfile for a reproducible environment
+      - name: Install dependencies
+        working-directory: dev-ops/DeployReady/app
+        run: npm ci
+
+      # Execute Jest tests — a non-zero exit code aborts the pipeline
+      - name: Run tests
+        working-directory: dev-ops/DeployReady/app
+        run: npm test
+
+  # ── 2. BUILD ─────────────────────────────────────────────────────────────────
+  # Build the Docker image and tag it with the Git commit SHA for traceability.
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Authenticate to GitHub Container Registry using the workflow token
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 3. PUSH ────────────────────────────────────────────────────────────
+      # Build the image from dev-ops/DeployReady/ and push two tags:
+      #   . the full commit SHA  — used by the deploy step for exact versioning
+      #   . latest               — convenient shorthand for manual pulls
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: dev-ops/DeployReady
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kora-analytics-api:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/kora-analytics-api:latest
+
+  # ── 4. DEPLOY ────────────────────────────────────────────────────────────────
+  # Trigger a new deploy on Render by calling the service's deploy hook URL.
+  # Requires one repository secret:
+  #   RENDER_DEPLOY_HOOK — the deploy hook URL from Render → Settings → Deploy Hook
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      # Hitting the deploy hook URL tells Render to pull and redeploy the latest image
+      - name: Deploy to Render
+        run: curl -f "${{ secrets.RENDER_DEPLOY_HOOK }}"
